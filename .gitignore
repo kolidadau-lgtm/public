@@ -1,0 +1,13 @@
+node_modules/
+.env
+# 1. Buang node_modules dari pengesanan Git (tidak memadam fail di komputer anda)
+git rm -r --cached node_modules
+
+# 2. Tambah fail yang diperbetulkan
+git add .
+
+# 3. Commit perubahan
+git commit -m "Bersihkan node_modules dan tambah index.js"
+
+# 4. Hantar ke GitHub
+git push origin main
