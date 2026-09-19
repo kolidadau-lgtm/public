@@ -1,0 +1,28 @@
+const express = require('express');
+const cors = require('cors');
+const { exec } = require('child_process');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+app.post('/api/download', (req, res) => {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL diperlukan' });
+
+    // Menjalankan yt-dlp untuk ekstrak URL video asal
+    const command = `npx yt-dlp-exec "${url}" -g -f "b"`;
+
+    exec(command, (error, stdout, stderr) => {
+        if (error) {
+            console.error(error);
+            return res.status(500).json({ error: 'Gagal mengekstrak video.' });
+        }
+        
+        const videoDirectUrl = stdout.trim().split('\n')[0];
+        res.json({ success: true, downloadUrl: videoDirectUrl });
+    });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server beroperasi di port ${PORT}`));
