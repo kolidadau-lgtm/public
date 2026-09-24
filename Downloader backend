@@ -26,3 +26,11 @@ app.post('/api/download', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server beroperasi di port ${PORT}`));
+
+app.post('/api/download', async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: "URL diperlukan" });
+  
+  // Logik memproses video anda di sini
+  res.json({ downloadUrl: "https://pautan-video-hasil.com/video.mp4" });
+});
