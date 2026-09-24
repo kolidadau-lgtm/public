@@ -9,14 +9,14 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (req, res) => {
-  res.status(200).send('Enjin Facebook Downloader Aktif!');
+  res.status(200).send('Enjin Facebook Direct Downloader Aktif!');
 });
 
-// Fungsi untuk tukar pautan kongsi /share/ kepada URL asal video
+// Fungsi penukaran URL Share ke URL Sebenar Facebook
 async function getFinalUrl(inputUrl) {
   try {
     const response = await fetch(inputUrl, {
-      method: 'HEAD',
+      method: 'GET',
       redirect: 'follow',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
@@ -36,64 +36,66 @@ app.post('/api/download', async (req, res) => {
       return res.status(400).json({ error: "Sila masukkan URL video yang sah!" });
     }
 
-    // Standardkan domain
-    url = url.replace("web.facebook.com", "www.facebook.com");
+    // Standardkan domain Facebook
+    url = url.replace("web.facebook.com", "www.facebook.com").replace("m.facebook.com", "www.facebook.com");
 
-    // Jika pautan jenis /share/ atau fb.watch, cari pautan sebenar dulu
+    // Selesaikan URL kongsi pendek (/share/r/ atau fb.watch)
     if (url.includes("/share/") || url.includes("fb.watch")) {
       url = await getFinalUrl(url);
     }
 
     let downloadUrl = null;
 
-    // STRATEGI 1: Cobalt API v10 Instance
+    // STRATEGI 1: Direct Facebook HTML Scraping (Membaca Meta Video MP4)
     try {
-      const cobaltRes = await fetch('https://api.cobalt.tools/api/json', {
-        method: 'POST',
+      const fbResponse = await fetch(url, {
         headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-        },
-        body: JSON.stringify({
-          url: url,
-          vQuality: 'max'
-        })
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Sec-Fetch-Dest': 'document'
+        }
       });
 
-      if (cobaltRes.ok) {
-        const cobaltData = await cobaltRes.json();
-        if (cobaltData.url) {
-          downloadUrl = cobaltData.url;
-        } else if (cobaltData.picker && cobaltData.picker.length > 0) {
-          downloadUrl = cobaltData.picker[0].url;
+      if (fbResponse.ok) {
+        const html = await fbResponse.text();
+        
+        // Cari pautan HD atau SD menerusi og:video / meta tag Facebook
+        const hdMatch = html.match(/browser_native_hd_url":"([^"]+)"/i) || html.match(/og:video:secure_url"\s+content="([^"]+)"/i);
+        const sdMatch = html.match(/browser_native_sd_url":"([^"]+)"/i) || html.match(/og:video"\s+content="([^"]+)"/i);
+
+        if (hdMatch && hdMatch[1]) {
+          downloadUrl = JSON.parse(`"${hdMatch[1]}"`);
+        } else if (sdMatch && sdMatch[1]) {
+          downloadUrl = JSON.parse(`"${sdMatch[1]}"`);
         }
       }
     } catch (e) {
-      console.warn("Cobalt API 1 Gagal:", e.message);
+      console.warn("Direct Extraction Gagal:", e.message);
     }
 
-    // STRATEGI 2: SnapSave Universal Fallback
+    // STRATEGI 2: Publer API Fallback (Jika Direct Extraction Disekat)
     if (!downloadUrl) {
       try {
-        const snapRes = await fetch('https://snapsave.app/action.php?lang=en', {
+        const publerRes = await fetch('https://publer.io/api/v1/media/download', {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Type': 'application/json',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
           },
-          body: new URLSearchParams({ url: url })
+          body: JSON.stringify({
+            url: url,
+            iphone: false
+          })
         });
 
-        if (snapRes.ok) {
-          const htmlText = await snapRes.text();
-          const match = htmlText.match(/href=\\"(https:\/\/[^\\]+)\\"/i) || htmlText.match(/(https?:\/\/[^\s"]+\.mp4[^\s"]*)/i);
-          if (match && match[1]) {
-            downloadUrl = match[1].replace(/\\/g, '');
+        if (publerRes.ok) {
+          const publerData = await publerRes.json();
+          if (publerData && publerData.payload && publerData.payload.length > 0) {
+            downloadUrl = publerData.payload[0].path;
           }
         }
       } catch (e) {
-        console.warn("SnapSave Gagal:", e.message);
+        console.warn("Publer Fallback Gagal:", e.message);
       }
     }
 
@@ -105,13 +107,13 @@ app.post('/api/download', async (req, res) => {
       });
     } else {
       return res.status(400).json({
-        error: "Tidak dapat mengekstrak video ini. Sila pastikan pautan adalah video awam (Public) dan bukannya akaun peribadi/kumpulan tertutup."
+        error: "Gagal mengekstrak video. Sila pastikan pautan adalah daripada video/Reels awam (Public)."
       });
     }
 
   } catch (err) {
     console.error("Ralat Pelayan Internal:", err);
-    return res.status(500).json({ error: "Ralat pemprosesan di pelayan." });
+    return res.status(500).json({ error: "Ralat dalaman pelayan semasa memproses pautan." });
   }
 });
 
