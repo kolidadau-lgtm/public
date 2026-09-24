@@ -17,7 +17,7 @@ app.get('/', (req, res) => {
 // Endpoint Utama Muat Turun Video
 app.post('/api/download', async (req, res) => {
   try {
-    const { url } = req.body;
+    let { url } = req.body;
 
     if (!url) {
       return res.status(400).json({ error: "Sila masukkan URL video yang sah!" });
@@ -25,10 +25,14 @@ app.post('/api/download', async (req, res) => {
 
     console.log("Memproses permintaan URL:", url);
 
-    // Senarai API Enjin Awam untuk memproses video FB & Instagram
+    // Pembersihan URL: Ubah web.facebook.com kepada www.facebook.com jika ada
+    url = url.replace("web.facebook.com", "www.facebook.com");
+
+    // Senarai API Enjin Awam Cobalt
     const instances = [
       "https://cobalt-api.koyeb.app/",
-      "https://api.cobalt.tools/"
+      "https://api.cobalt.tools/",
+      "https://co.wuk.sh/"
     ];
 
     let downloadUrl = null;
@@ -39,7 +43,8 @@ app.post('/api/download', async (req, res) => {
           method: "POST",
           headers: {
             "Accept": "application/json",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
           },
           body: JSON.stringify({
             url: url,
@@ -51,9 +56,12 @@ app.post('/api/download', async (req, res) => {
           const data = await response.json();
           downloadUrl = data.url || data.path;
           if (downloadUrl) break;
+        } else {
+          const errData = await response.json().catch(() => ({}));
+          console.warn(`Instance ${instanceUrl} memulangkan status:`, response.status, errData);
         }
       } catch (e) {
-        console.warn("API instance gagal, mencuba pilihan seterusnya...", e.message);
+        console.warn(`Instance ${instanceUrl} gagal:`, e.message);
       }
     }
 
@@ -64,7 +72,7 @@ app.post('/api/download', async (req, res) => {
       });
     } else {
       return res.status(400).json({ 
-        error: "Gagal mengambil video. Pastikan pautan adalah awam (Public) atau cuba semula." 
+        error: "Gagal mengambil video. Pastikan pautan adalah awam (Public) atau cuba pautan video lain." 
       });
     }
 
