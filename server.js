@@ -9,24 +9,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (req, res) => {
-  res.status(200).send('API Multi-Downloader Aktif!');
+  res.status(200).send('API Video Downloader Aktif!');
 });
-
-// Fungsi untuk menukar pautan shortlink /share/r/ kepada URL asal Facebook
-async function expandUrl(shortUrl) {
-  try {
-    const response = await fetch(shortUrl, {
-      method: 'HEAD',
-      redirect: 'follow',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-      }
-    });
-    return response.url || shortUrl;
-  } catch (e) {
-    return shortUrl;
-  }
-}
 
 app.post('/api/download', async (req, res) => {
   try {
@@ -39,52 +23,56 @@ app.post('/api/download', async (req, res) => {
       });
     }
 
-    // Standardkan domain Facebook
-    let cleanUrl = rawUrl.trim()
-      .replace("web.facebook.com", "www.facebook.com")
-      .replace("m.facebook.com", "www.facebook.com");
-
-    // Jika pautan jenis shortlink, dapatkan URL penuhnya dahulu
-    if (cleanUrl.includes("/share/") || cleanUrl.includes("fb.watch")) {
-      cleanUrl = await expandUrl(cleanUrl);
-    }
-
+    let targetUrl = rawUrl.trim();
     let downloadLink = null;
 
-    // STRATEGI 1: Cobalt Official API
+    // ENJIN 1: Fast SaveFrom API Engine
     try {
-      const cobaltRes = await fetch('https://api.cobalt.tools/api/json', {
+      const response = await fetch('https://worker.sf-tools.com/savefrom.php', {
         method: 'POST',
         headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
         },
-        body: JSON.stringify({
-          url: cleanUrl,
-          vQuality: 'max'
-        })
+        body: new URLSearchParams({ sf_url: targetUrl })
       });
 
-      if (cobaltRes.ok) {
-        const cobaltData = await cobaltRes.json();
-        if (cobaltData.url) {
-          downloadLink = cobaltData.url;
-        } else if (cobaltData.picker && cobaltData.picker.length > 0) {
-          downloadLink = cobaltData.picker[0].url;
+      if (response.ok) {
+        const textData = await response.text();
+        const jsonMatch = textData.match(/({.*})/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed?.url?.[0]?.url) {
+            downloadLink = parsed.url[0].url;
+          }
         }
       }
     } catch (e) {
-      console.warn("Cobalt API Gagal:", e.message);
+      console.warn("Enjin SaveFrom gagal:", e.message);
     }
 
-    // STRATEGI 2: FB Video Scraper Direct Stream
+    // ENJIN 2: Social Media Downloader Fallback
     if (!downloadLink) {
       try {
-        const fbRes = await fetch(cleanUrl, {
+        const apiRes = await fetch('https://api.tiklydown.eu.org/api/download?url=' + encodeURIComponent(targetUrl));
+        if (apiRes.ok) {
+          const data = await apiRes.json();
+          if (data?.video?.noWatermark || data?.url) {
+            downloadLink = data.video?.noWatermark || data.url;
+          }
+        }
+      } catch (e) {
+        console.warn("Enjin Tiklydown gagal:", e.message);
+      }
+    }
+
+    // ENJIN 3: Direct Facebook HTML Meta Scraper
+    if (!downloadLink) {
+      try {
+        const cleanFbUrl = targetUrl.replace("web.facebook.com", "www.facebook.com").replace("m.facebook.com", "www.facebook.com");
+        const fbRes = await fetch(cleanFbUrl, {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
           }
         });
 
@@ -100,11 +88,11 @@ app.post('/api/download', async (req, res) => {
           }
         }
       } catch (e) {
-        console.warn("Direct Scraping Gagal:", e.message);
+        console.warn("Enjin Direct HTML gagal:", e.message);
       }
     }
 
-    // Keputusan Akhir
+    // Keputusan
     if (downloadLink) {
       return res.status(200).json({
         success: true,
