@@ -9,7 +9,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (req, res) => {
-  res.status(200).send('API Multi-Downloader Aktif!');
+  res.status(200).send('API Downloader Aktif!');
 });
 
 app.post('/api/download', async (req, res) => {
@@ -26,47 +26,41 @@ app.post('/api/download', async (req, res) => {
     let targetUrl = rawUrl.trim();
     let downloadLink = null;
 
-    // ENJIN 1: Publer Video Extractor API (Sangat Kuat Untuk Reels Facebook/Instagram)
+    // ENJIN 1: SnapSave Public API Parser (Sangat Stabil Untuk Facebook Reels & Shorts)
     try {
-      const publerRes = await fetch('https://publer.io/api/v1/job/url', {
+      const params = new URLSearchParams();
+      params.append('url', targetUrl);
+
+      const snapRes = await fetch('https://snapsave.app/action.php', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Origin': 'https://snapsave.app',
+          'Referer': 'https://snapsave.app/'
         },
-        body: JSON.stringify({
-          url: targetUrl,
-          iphone: false
-        })
+        body: params
       });
 
-      if (publerRes.ok) {
-        const publerData = await publerRes.json();
-        const jobId = publerData.job_id;
-
-        // Semak status kerja
-        if (jobId) {
-          for (let i = 0; i < 5; i++) {
-            await new Promise(r => setTimeout(r, 1000));
-            const statusRes = await fetch(`https://publer.io/api/v1/job/status/${jobId}`);
-            if (statusRes.ok) {
-              const statusData = await statusRes.json();
-              if (statusData.status === 'complete' && statusData.payload && statusData.payload.length > 0) {
-                downloadLink = statusData.payload[0].path;
-                break;
-              }
-            }
-          }
+      if (snapRes.ok) {
+        const htmlText = await snapRes.text();
+        
+        // Ekstrak URL video daripada respon SnapSave
+        const urlMatches = htmlText.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i) || 
+                           htmlText.match(/https:\/\/video[^\s"']+/i);
+                           
+        if (urlMatches && urlMatches[0]) {
+          downloadLink = urlMatches[0].replace(/&amp;/g, '&').replace(/^href="/, '');
         }
       }
     } catch (e) {
-      console.warn("Enjin Publer gagal:", e.message);
+      console.warn("Enjin SnapSave gagal:", e.message);
     }
 
-    // ENJIN 2: FBDownloader Alternative
+    // ENJIN 2: TiklyDown Fallback (Instagram & Facebook)
     if (!downloadLink) {
       try {
-        const altRes = await fetch('https://api.tiklydown.eu.org/api/download?url=' + encodeURIComponent(targetUrl));
+        const altRes = await fetch(`https://api.tiklydown.eu.org/api/download?url=${encodeURIComponent(targetUrl)}`);
         if (altRes.ok) {
           const altData = await altRes.json();
           if (altData?.video?.noWatermark || altData?.url) {
@@ -74,7 +68,22 @@ app.post('/api/download', async (req, res) => {
           }
         }
       } catch (e) {
-        console.warn("Enjin Alt gagal:", e.message);
+        console.warn("Enjin Fallback gagal:", e.message);
+      }
+    }
+
+    // ENJIN 3: Direct Rapid Extractor
+    if (!downloadLink) {
+      try {
+        const vkrRes = await fetch(`https://api.vkrdown.com/api/item?url=${encodeURIComponent(targetUrl)}`);
+        if (vkrRes.ok) {
+          const vkrData = await vkrRes.json();
+          if (vkrData?.data?.downloads?.[0]?.url) {
+            downloadLink = vkrData.data.downloads[0].url;
+          }
+        }
+      } catch (e) {
+        console.warn("Enjin VKR gagal:", e.message);
       }
     }
 
