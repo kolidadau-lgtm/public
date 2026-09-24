@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const { exec } = require('child_process');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -45,55 +44,59 @@ app.post('/api/download', async (req, res) => {
 
     let downloadUrl = null;
 
-    // STRATEGI 1: Gunakan API Scraper Terus (Paling Cepat & Elak Sekatan IP Render)
+    // STRATEGI 1: Rapid VKR Downloader API
     try {
-      const apiRes = await fetch(`https://api.vkrdown.com/api/item?url=${encodeURIComponent(url)}`);
-      if (apiRes.ok) {
-        const data = await apiRes.json();
-        if (data && data.data && data.data.downloads && data.data.downloads.length > 0) {
-          const stream = data.data.downloads.find(d => d.extension === 'mp4') || data.data.downloads[0];
-          if (stream && stream.url) {
-            downloadUrl = stream.url;
-          }
+      const api1 = await fetch(`https://api.vkrdown.com/api/item?url=${encodeURIComponent(url)}`);
+      if (api1.ok) {
+        const data1 = await api1.json();
+        if (data1?.data?.downloads?.length > 0) {
+          const stream = data1.data.downloads.find(d => d.extension === 'mp4' || d.quality) || data1.data.downloads[0];
+          if (stream?.url) downloadUrl = stream.url;
         }
       }
     } catch (e) {
-      console.warn("Strategi API 1 Gagal, meneruskan ke yt-dlp...", e.message);
+      console.warn("API 1 Gagal:", e.message);
     }
 
-    // Jika Strategi 1 Berjaya
+    // STRATEGI 2: SaveFrom Backend API (Fallback)
+    if (!downloadUrl) {
+      try {
+        const api2 = await fetch('https://worker.sf-tools.com/savefrom.php', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          },
+          body: new URLSearchParams({ url: url })
+        });
+        
+        if (api2.ok) {
+          const data2 = await api2.json();
+          if (data2 && data2[0] && data2[0].url && data2[0].url[0]) {
+            downloadUrl = data2[0].url[0].url;
+          }
+        }
+      } catch (e) {
+        console.warn("API 2 Gagal:", e.message);
+      }
+    }
+
+    // Response Akhir
     if (downloadUrl) {
       return res.status(200).json({
         success: true,
         downloadUrl: downloadUrl,
         message: "Video berjaya diproses!"
       });
-    }
-
-    // STRATEGI 2: Jalankan yt-dlp Tempatan Jika API Utama Tersekat
-    const command = `yt-dlp --no-check-certificates --referer "https://www.facebook.com/" --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" -g -f "b" "${url}"`;
-
-    exec(command, { timeout: 35000 }, (error, stdout, stderr) => {
-      if (!error && stdout) {
-        const directLink = stdout.trim().split('\n')[0];
-        if (directLink && directLink.startsWith('http')) {
-          return res.status(200).json({
-            success: true,
-            downloadUrl: directLink,
-            message: "Video berjaya diproses!"
-          });
-        }
-      }
-
-      console.error("Gagal di kedua-dua strategi:", stderr || error?.message);
-      return res.status(500).json({
-        error: "Gagal mengekstrak video. Pastikan video tersebut adalah awam (Public) dan cuba semula."
+    } else {
+      return res.status(400).json({
+        error: "Tidak dapat mengekstrak video ini. Pastikan pautan adalah awam (Public) dan cuba sekali lagi."
       });
-    });
+    }
 
   } catch (err) {
     console.error("Ralat Pelayan Internal:", err);
-    return res.status(500).json({ error: "Ralat dalaman pelayan semasa memproses pautan." });
+    return res.status(500).json({ error: "Ralat pemprosesan di pelayan." });
   }
 });
 
