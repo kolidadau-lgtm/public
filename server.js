@@ -9,7 +9,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (req, res) => {
-  res.status(200).send('API Video Downloader Aktif!');
+  res.status(200).send('API Multi-Downloader Aktif!');
 });
 
 app.post('/api/download', async (req, res) => {
@@ -26,73 +26,59 @@ app.post('/api/download', async (req, res) => {
     let targetUrl = rawUrl.trim();
     let downloadLink = null;
 
-    // ENJIN 1: Fast SaveFrom API Engine
+    // ENJIN 1: Publer Video Extractor API (Sangat Kuat Untuk Reels Facebook/Instagram)
     try {
-      const response = await fetch('https://worker.sf-tools.com/savefrom.php', {
+      const publerRes = await fetch('https://publer.io/api/v1/job/url', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Type': 'application/json',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
         },
-        body: new URLSearchParams({ sf_url: targetUrl })
+        body: JSON.stringify({
+          url: targetUrl,
+          iphone: false
+        })
       });
 
-      if (response.ok) {
-        const textData = await response.text();
-        const jsonMatch = textData.match(/({.*})/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (parsed?.url?.[0]?.url) {
-            downloadLink = parsed.url[0].url;
+      if (publerRes.ok) {
+        const publerData = await publerRes.json();
+        const jobId = publerData.job_id;
+
+        // Semak status kerja
+        if (jobId) {
+          for (let i = 0; i < 5; i++) {
+            await new Promise(r => setTimeout(r, 1000));
+            const statusRes = await fetch(`https://publer.io/api/v1/job/status/${jobId}`);
+            if (statusRes.ok) {
+              const statusData = await statusRes.json();
+              if (statusData.status === 'complete' && statusData.payload && statusData.payload.length > 0) {
+                downloadLink = statusData.payload[0].path;
+                break;
+              }
+            }
           }
         }
       }
     } catch (e) {
-      console.warn("Enjin SaveFrom gagal:", e.message);
+      console.warn("Enjin Publer gagal:", e.message);
     }
 
-    // ENJIN 2: Social Media Downloader Fallback
+    // ENJIN 2: FBDownloader Alternative
     if (!downloadLink) {
       try {
-        const apiRes = await fetch('https://api.tiklydown.eu.org/api/download?url=' + encodeURIComponent(targetUrl));
-        if (apiRes.ok) {
-          const data = await apiRes.json();
-          if (data?.video?.noWatermark || data?.url) {
-            downloadLink = data.video?.noWatermark || data.url;
+        const altRes = await fetch('https://api.tiklydown.eu.org/api/download?url=' + encodeURIComponent(targetUrl));
+        if (altRes.ok) {
+          const altData = await altRes.json();
+          if (altData?.video?.noWatermark || altData?.url) {
+            downloadLink = altData.video?.noWatermark || altData.url;
           }
         }
       } catch (e) {
-        console.warn("Enjin Tiklydown gagal:", e.message);
+        console.warn("Enjin Alt gagal:", e.message);
       }
     }
 
-    // ENJIN 3: Direct Facebook HTML Meta Scraper
-    if (!downloadLink) {
-      try {
-        const cleanFbUrl = targetUrl.replace("web.facebook.com", "www.facebook.com").replace("m.facebook.com", "www.facebook.com");
-        const fbRes = await fetch(cleanFbUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-          }
-        });
-
-        if (fbRes.ok) {
-          const html = await fbRes.text();
-          const hdMatch = html.match(/browser_native_hd_url":"([^"]+)"/i) || html.match(/og:video:secure_url"\s+content="([^"]+)"/i);
-          const sdMatch = html.match(/browser_native_sd_url":"([^"]+)"/i) || html.match(/og:video"\s+content="([^"]+)"/i);
-
-          if (hdMatch && hdMatch[1]) {
-            downloadLink = JSON.parse(`"${hdMatch[1]}"`);
-          } else if (sdMatch && sdMatch[1]) {
-            downloadLink = JSON.parse(`"${sdMatch[1]}"`);
-          }
-        }
-      } catch (e) {
-        console.warn("Enjin Direct HTML gagal:", e.message);
-      }
-    }
-
-    // Keputusan
+    // Keputusan Akhir
     if (downloadLink) {
       return res.status(200).json({
         success: true,
