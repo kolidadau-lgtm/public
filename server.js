@@ -4,17 +4,31 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Rute Ujian Utama
 app.get('/', (req, res) => {
   res.status(200).send('Server Backend Downloader Aktif!');
 });
 
-// Endpoint Utama Muat Turun Video
+// Fungsi untuk menyelesaikan URL pendek/share menjadi URL asli
+async function resolveFinalUrl(targetUrl) {
+  try {
+    const response = await fetch(targetUrl, {
+      method: 'HEAD',
+      redirect: 'follow',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    });
+    return response.url || targetUrl;
+  } catch (e) {
+    console.warn("Gagal resolve URL, menggunakan URL asli:", e.message);
+    return targetUrl;
+  }
+}
+
 app.post('/api/download', async (req, res) => {
   try {
     let { url } = req.body;
@@ -23,15 +37,21 @@ app.post('/api/download', async (req, res) => {
       return res.status(400).json({ error: "Sila masukkan URL video yang sah!" });
     }
 
-    console.log("Memproses permintaan URL:", url);
+    console.log("URL Awal:", url);
 
-    // Pembersihan URL: Ubah web.facebook.com kepada www.facebook.com jika ada
+    // 1. Bersihkan prefix web.facebook.com
     url = url.replace("web.facebook.com", "www.facebook.com");
 
-    // Senarai API Enjin Awam Cobalt
+    // 2. Resolve URL jika mengandung link share/shortlink
+    if (url.includes("/share/") || url.includes("fb.watch")) {
+      url = await resolveFinalUrl(url);
+      console.log("URL Setelah Resolve:", url);
+    }
+
+    // List Public Cobalt Instances
     const instances = [
-      "https://cobalt-api.koyeb.app/",
       "https://api.cobalt.tools/",
+      "https://cobalt-api.koyeb.app/",
       "https://co.wuk.sh/"
     ];
 
@@ -48,20 +68,21 @@ app.post('/api/download', async (req, res) => {
           },
           body: JSON.stringify({
             url: url,
-            videoQuality: "720"
+            videoQuality: "720",
+            downloadMode: "auto"
           })
         });
 
         if (response.ok) {
           const data = await response.json();
-          downloadUrl = data.url || data.path;
+          downloadUrl = data.url || data.path || (data.picker && data.picker[0]?.url);
           if (downloadUrl) break;
         } else {
-          const errData = await response.json().catch(() => ({}));
-          console.warn(`Instance ${instanceUrl} memulangkan status:`, response.status, errData);
+          const errBody = await response.text();
+          console.warn(`Instance ${instanceUrl} gagal (${response.status}):`, errBody);
         }
       } catch (e) {
-        console.warn(`Instance ${instanceUrl} gagal:`, e.message);
+        console.warn(`Instance ${instanceUrl} error:`, e.message);
       }
     }
 
@@ -72,7 +93,7 @@ app.post('/api/download', async (req, res) => {
       });
     } else {
       return res.status(400).json({ 
-        error: "Gagal mengambil video. Pastikan pautan adalah awam (Public) atau cuba pautan video lain." 
+        error: "Gagal mengambil video. Sila pastikan pautan adalah awam (Public) atau gunakan pautan direct video." 
       });
     }
 
@@ -82,7 +103,6 @@ app.post('/api/download', async (req, res) => {
   }
 });
 
-// Jalankan Pelayan
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server aktif dan berjalan di port ${PORT}`);
 });
