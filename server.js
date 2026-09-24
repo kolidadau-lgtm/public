@@ -9,12 +9,27 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (req, res) => {
-  res.status(200).send('Enjin Facebook Downloader Aktif!');
+  res.status(200).send('API Multi-Downloader Aktif!');
 });
+
+// Fungsi untuk menukar pautan shortlink /share/r/ kepada URL asal Facebook
+async function expandUrl(shortUrl) {
+  try {
+    const response = await fetch(shortUrl, {
+      method: 'HEAD',
+      redirect: 'follow',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+      }
+    });
+    return response.url || shortUrl;
+  } catch (e) {
+    return shortUrl;
+  }
+}
 
 app.post('/api/download', async (req, res) => {
   try {
-    // Terima kedua-dua pemboleh ubah 'url' atau 'videoUrl'
     let rawUrl = req.body.url || req.body.videoUrl;
 
     if (!rawUrl) {
@@ -24,54 +39,68 @@ app.post('/api/download', async (req, res) => {
       });
     }
 
-    // Kemaskini format URL Facebook
-    let cleanUrl = rawUrl.trim().replace("web.facebook.com", "www.facebook.com").replace("m.facebook.com", "www.facebook.com");
+    // Standardkan domain Facebook
+    let cleanUrl = rawUrl.trim()
+      .replace("web.facebook.com", "www.facebook.com")
+      .replace("m.facebook.com", "www.facebook.com");
+
+    // Jika pautan jenis shortlink, dapatkan URL penuhnya dahulu
+    if (cleanUrl.includes("/share/") || cleanUrl.includes("fb.watch")) {
+      cleanUrl = await expandUrl(cleanUrl);
+    }
 
     let downloadLink = null;
 
-    // ENJIN 1: API Direct Facebook Parser (AIO Engine)
+    // STRATEGI 1: Cobalt Official API
     try {
-      const api1 = await fetch(`https://api.vkrdown.com/api/item?url=${encodeURIComponent(cleanUrl)}`);
-      if (api1.ok) {
-        const data1 = await api1.json();
-        if (data1 && data1.data && data1.data.downloads && data1.data.downloads.length > 0) {
-          const videoObj = data1.data.downloads.find(d => d.extension === 'mp4' || d.quality) || data1.data.downloads[0];
-          if (videoObj && videoObj.url) {
-            downloadLink = videoObj.url;
-          }
+      const cobaltRes = await fetch('https://api.cobalt.tools/api/json', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        },
+        body: JSON.stringify({
+          url: cleanUrl,
+          vQuality: 'max'
+        })
+      });
+
+      if (cobaltRes.ok) {
+        const cobaltData = await cobaltRes.json();
+        if (cobaltData.url) {
+          downloadLink = cobaltData.url;
+        } else if (cobaltData.picker && cobaltData.picker.length > 0) {
+          downloadLink = cobaltData.picker[0].url;
         }
       }
     } catch (e) {
-      console.warn("Enjin 1 gagal:", e.message);
+      console.warn("Cobalt API Gagal:", e.message);
     }
 
-    // ENJIN 2: Social Media Downloader API (Fallback)
+    // STRATEGI 2: FB Video Scraper Direct Stream
     if (!downloadLink) {
       try {
-        const api2 = await fetch(`https://social-downloader-api.vercel.app/api/facebook?url=${encodeURIComponent(cleanUrl)}`);
-        if (api2.ok) {
-          const data2 = await api2.json();
-          if (data2 && (data2.hd || data2.sd || data2.url)) {
-            downloadLink = data2.hd || data2.sd || data2.url;
+        const fbRes = await fetch(cleanUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9'
+          }
+        });
+
+        if (fbRes.ok) {
+          const html = await fbRes.text();
+          const hdMatch = html.match(/browser_native_hd_url":"([^"]+)"/i) || html.match(/og:video:secure_url"\s+content="([^"]+)"/i);
+          const sdMatch = html.match(/browser_native_sd_url":"([^"]+)"/i) || html.match(/og:video"\s+content="([^"]+)"/i);
+
+          if (hdMatch && hdMatch[1]) {
+            downloadLink = JSON.parse(`"${hdMatch[1]}"`);
+          } else if (sdMatch && sdMatch[1]) {
+            downloadLink = JSON.parse(`"${sdMatch[1]}"`);
           }
         }
       } catch (e) {
-        console.warn("Enjin 2 gagal:", e.message);
-      }
-    }
-
-    // ENJIN 3: FB Video Downloader Endpoint Alternative
-    if (!downloadLink) {
-      try {
-        const api3 = await fetch(`https://a2zdownloader.com/api/get-video-info?url=${encodeURIComponent(cleanUrl)}`);
-        if (api3.ok) {
-          const data3 = await api3.json();
-          if (data3 && data3.url) {
-            downloadLink = data3.url;
-          }
-        }
-      } catch (e) {
-        console.warn("Enjin 3 gagal:", e.message);
+        console.warn("Direct Scraping Gagal:", e.message);
       }
     }
 
