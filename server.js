@@ -12,11 +12,11 @@ app.get('/', (req, res) => {
   res.status(200).send('Server Backend Downloader Aktif!');
 });
 
-// Fungsi untuk menyelesaikan URL pendek/share menjadi URL asli
+// Fungsi untuk mendapatkan URL sebenar daripada pautan kongsi/Reels
 async function resolveFinalUrl(targetUrl) {
   try {
     const response = await fetch(targetUrl, {
-      method: 'HEAD',
+      method: 'GET',
       redirect: 'follow',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -24,7 +24,6 @@ async function resolveFinalUrl(targetUrl) {
     });
     return response.url || targetUrl;
   } catch (e) {
-    console.warn("Gagal resolve URL, menggunakan URL asli:", e.message);
     return targetUrl;
   }
 }
@@ -37,63 +36,79 @@ app.post('/api/download', async (req, res) => {
       return res.status(400).json({ error: "Sila masukkan URL video yang sah!" });
     }
 
-    console.log("URL Awal:", url);
-
-    // 1. Bersihkan prefix web.facebook.com
+    // 1. Bersihkan & Selesaikan Pautan URL
     url = url.replace("web.facebook.com", "www.facebook.com");
-
-    // 2. Resolve URL jika mengandung link share/shortlink
     if (url.includes("/share/") || url.includes("fb.watch")) {
       url = await resolveFinalUrl(url);
-      console.log("URL Setelah Resolve:", url);
     }
-
-    // List Public Cobalt Instances
-    const instances = [
-      "https://api.cobalt.tools/",
-      "https://cobalt-api.koyeb.app/",
-      "https://co.wuk.sh/"
-    ];
 
     let downloadUrl = null;
 
-    for (let instanceUrl of instances) {
-      try {
-        const response = await fetch(instanceUrl, {
-          method: "POST",
-          headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-          },
-          body: JSON.stringify({
-            url: url,
-            videoQuality: "720",
-            downloadMode: "auto"
-          })
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          downloadUrl = data.url || data.path || (data.picker && data.picker[0]?.url);
-          if (downloadUrl) break;
-        } else {
-          const errBody = await response.text();
-          console.warn(`Instance ${instanceUrl} gagal (${response.status}):`, errBody);
+    // 2. Percubaan Enjin 1: API Direct Scraper (SaveFrom/Snapsave Engine Compatible)
+    try {
+      const response = await fetch(`https://api.vkrdown.com/api/item?url=${encodeURIComponent(url)}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.data && data.data.downloads) {
+          const stream = data.data.downloads.find(d => d.extension === 'mp4') || data.data.downloads[0];
+          if (stream && stream.url) {
+            downloadUrl = stream.url;
+          }
         }
-      } catch (e) {
-        console.warn(`Instance ${instanceUrl} error:`, e.message);
+      }
+    } catch (e) {
+      console.warn("Enjin 1 Gagal:", e.message);
+    }
+
+    // 3. Percubaan Enjin 2: Fallback Cobalt API
+    if (!downloadUrl) {
+      const instances = [
+        "https://api.cobalt.tools/",
+        "https://cobalt-api.koyeb.app/"
+      ];
+
+      for (let instanceUrl of instances) {
+        try {
+          const response = await fetch(instanceUrl, {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "Content-Type": "application/json",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+            body: JSON.stringify({
+              url: url,
+              videoQuality: "720"
+            })
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            downloadUrl = data.url || data.path;
+            if (downloadUrl) break;
+          }
+        } catch (e) {
+          console.warn("Enjin 2 Cobalt Gagal:", e.message);
+        }
       }
     }
 
+    // Jika berjaya dapat pautan video
     if (downloadUrl) {
       return res.status(200).json({
         downloadUrl: downloadUrl,
         message: "Video berjaya diproses!"
       });
     } else {
-      return res.status(400).json({ 
-        error: "Gagal mengambil video. Sila pastikan pautan adalah awam (Public) atau gunakan pautan direct video." 
+      // Jika kedua-dua enjin gagal, hantar pautan fallback portal
+      const fallbackPortal = url.includes("facebook.com")
+        ? `https://fdown.net/downloadphp.php?URL=${encodeURIComponent(url)}`
+        : `https://snapinst.app/`;
+
+      return res.status(200).json({
+        downloadUrl: fallbackPortal,
+        isExternalPortal: true,
+        message: "Video diproses menerusi portal muat turun."
       });
     }
 
