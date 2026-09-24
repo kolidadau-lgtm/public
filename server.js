@@ -9,10 +9,10 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (req, res) => {
-  res.status(200).send('Enjin Private Downloader Backend Aktif!');
+  res.status(200).send('Enjin Multi-Downloader Backend Aktif!');
 });
 
-// Fungsi penukaran URL Share ke URL Asal
+// Penukaran URL Share ke URL Asal
 async function resolveFinalUrl(targetUrl) {
   try {
     const response = await fetch(targetUrl, {
@@ -36,7 +36,7 @@ app.post('/api/download', async (req, res) => {
       return res.status(400).json({ error: "Sila masukkan URL video yang sah!" });
     }
 
-    // Bersihkan format URL Facebook
+    // Standardkan URL Facebook
     url = url.replace("web.facebook.com", "www.facebook.com");
     if (url.includes("/share/") || url.includes("fb.watch")) {
       url = await resolveFinalUrl(url);
@@ -44,60 +44,49 @@ app.post('/api/download', async (req, res) => {
 
     let downloadUrl = null;
 
-    // STRATEGI 1: Cobalt Scraper Engine (Standard Utama untuk Facebook Reels)
+    // STRATEGI 1: FDown Core Scraper
     try {
-      const cobaltRes = await fetch('https://co.wuk.sh/api/json', {
+      const fdownRes = await fetch('https://fdown.net/download.php', {
         method: 'POST',
         headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
         },
-        body: JSON.stringify({
-          url: url,
-          vCodec: 'h264',
-          vQuality: 'max'
-        })
+        body: new URLSearchParams({ URL: url })
       });
 
-      if (cobaltRes.ok) {
-        const cobaltData = await cobaltRes.json();
-        if (cobaltData && (cobaltData.url || cobaltData.picker)) {
-          downloadUrl = cobaltData.url || (cobaltData.picker && cobaltData.picker[0] ? cobaltData.picker[0].url : null);
+      if (fdownRes.ok) {
+        const html = await fdownRes.text();
+        const hdMatch = html.match(/id="hdlink"\s+href="([^"]+)"/i);
+        const sdMatch = html.match(/id="sdlink"\s+href="([^"]+)"/i);
+
+        if (hdMatch && hdMatch[1]) {
+          downloadUrl = hdMatch[1].replace(/&amp;/g, '&');
+        } else if (sdMatch && sdMatch[1]) {
+          downloadUrl = sdMatch[1].replace(/&amp;/g, '&');
         }
       }
     } catch (e) {
-      console.warn(" Cobalt API Gagal:", e.message);
+      console.warn("FDown Scraper Gagal:", e.message);
     }
 
-    // STRATEGI 2: SnapSave Direct API
+    // STRATEGI 2: FBDownloader API Fallback
     if (!downloadUrl) {
       try {
-        const snapRes = await fetch('https://snapsave.app/action.php?lang=en', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-          },
-          body: new URLSearchParams({ url: url })
-        });
-
-        if (snapRes.ok) {
-          const htmlText = await snapRes.text();
-          // Extract link mp4 daripada respon Snapsave
-          const match = htmlText.match(/href=\\"(https:\/\/video[^\\]+)\\"/i) || htmlText.match(/https?:\/\/[^\s"]+\.mp4[^\s"]*/i);
-          if (match && match[1]) {
-            downloadUrl = match[1].replace(/\\/g, '');
-          } else if (match && match[0]) {
-            downloadUrl = match[0].replace(/\\/g, '');
+        const apiRes = await fetch(`https://api.vkrdown.com/api/item?url=${encodeURIComponent(url)}`);
+        if (apiRes.ok) {
+          const data = await apiRes.json();
+          if (data?.data?.downloads?.length > 0) {
+            const stream = data.data.downloads.find(d => d.extension === 'mp4' || d.quality) || data.data.downloads[0];
+            if (stream?.url) downloadUrl = stream.url;
           }
         }
       } catch (e) {
-        console.warn("SnapSave Scraper Gagal:", e.message);
+        console.warn("API Fallback Gagal:", e.message);
       }
     }
 
-    // Response Hasil
+    // Respons Hasil
     if (downloadUrl) {
       return res.status(200).json({
         success: true,
