@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const { exec } = require('child_process');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -9,80 +10,45 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.get('/', (req, res) => {
-  res.status(200).send('Server Backend Downloader Aktif!');
+  res.status(200).send('Enjin Private yt-dlp Backend Aktif!');
 });
 
-// Fungsi resolve URL pautan share
-async function resolveFinalUrl(targetUrl) {
-  try {
-    const response = await fetch(targetUrl, {
-      method: 'GET',
-      redirect: 'follow',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-    return response.url || targetUrl;
-  } catch (e) {
-    return targetUrl;
+app.post('/api/download', (req, res) => {
+  let { url } = req.body;
+
+  if (!url) {
+    return res.status(400).json({ error: "Sila masukkan URL video yang sah!" });
   }
-}
 
-app.post('/api/download', async (req, res) => {
-  try {
-    let { url } = req.body;
+  // Menjalankan arahan yt-dlp secara terus dari pelayan anda
+  // -g : mengambil URL media asal (direct mp4 link)
+  // -f "b" : mengambil format video terperinci yang terbaik
+  const command = `yt-dlp -g -f "b" "${url}"`;
 
-    if (!url) {
-      return res.status(400).json({ error: "Sila masukkan URL video yang sah!" });
-    }
-
-    url = url.replace("web.facebook.com", "www.facebook.com");
-    if (url.includes("/share/") || url.includes("fb.watch")) {
-      url = await resolveFinalUrl(url);
-    }
-
-    let downloadUrl = null;
-
-    // Percubaan Enjin Direct Scraper
-    try {
-      const response = await fetch(`https://api.vkrdown.com/api/item?url=${encodeURIComponent(url)}`);
-      if (response.ok) {
-        const data = await response.json();
-        if (data && data.data && data.data.downloads) {
-          const stream = data.data.downloads.find(d => d.extension === 'mp4') || data.data.downloads[0];
-          if (stream && stream.url) {
-            downloadUrl = stream.url;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn("Enjin Scraper Gagal:", e.message);
-    }
-
-    // Jika berjaya dapat direct link video
-    if (downloadUrl) {
-      return res.status(200).json({
-        downloadUrl: downloadUrl,
-        message: "Video berjaya diproses!"
+  exec(command, { timeout: 30000 }, (error, stdout, stderr) => {
+    if (error) {
+      console.error("Ralat yt-dlp:", stderr || error.message);
+      return res.status(500).json({ 
+        error: "Gagal mengekstrak video. Pastikan pautan adalah awam (Public) atau cuba pautan lain." 
       });
     }
 
-    // Jika enjin scraper disekat, hantar ke portal pemprosesan yang aktif (Tanpa ralat 404)
-    const externalPortal = url.includes("facebook.com")
-      ? `https://snapsave.app/`
-      : `https://snapinst.app/`;
+    const videoDirectUrl = stdout.trim().split('\n')[0];
 
-    return res.status(200).json({
-      downloadUrl: externalPortal,
-      message: "Proses lanjut di portal muat turun."
-    });
-
-  } catch (error) {
-    console.error("Ralat pelayan:", error);
-    return res.status(500).json({ error: "Ralat dalaman pelayan semasa memproses video." });
-  }
+    if (videoDirectUrl && videoDirectUrl.startsWith('http')) {
+      return res.status(200).json({
+        success: true,
+        downloadUrl: videoDirectUrl,
+        message: "Video berjaya diproses!"
+      });
+    } else {
+      return res.status(400).json({
+        error: "Pautan direct video tidak ditemui."
+      });
+    }
+  });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server aktif dan berjalan di port ${PORT}`);
+  console.log(`Server yt-dlp aktif dan berjalan di port ${PORT}`);
 });
