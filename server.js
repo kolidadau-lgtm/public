@@ -8,10 +8,28 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Semakan laluan utama
 app.get('/', (req, res) => {
-  res.status(200).send('API Downloader Aktif!');
+  res.status(200).send('API Multi-Downloader Aktif!');
 });
 
+// Fungsi untuk menyelesaikan URL pautan kongsian Facebook (/share/r/)
+async function resolveFacebookUrl(url) {
+  try {
+    const response = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'follow',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+      }
+    });
+    return response.url || url;
+  } catch (e) {
+    return url;
+  }
+}
+
+// Endpoint POST /api/download mengikut panggilan dari frontend
 app.post('/api/download', async (req, res) => {
   try {
     let rawUrl = req.body.url || req.body.videoUrl;
@@ -24,9 +42,15 @@ app.post('/api/download', async (req, res) => {
     }
 
     let targetUrl = rawUrl.trim();
+
+    // Selesaikan pautan shortlink /share/r/ sekiranya ada
+    if (targetUrl.includes('/share/')) {
+      targetUrl = await resolveFacebookUrl(targetUrl);
+    }
+
     let downloadLink = null;
 
-    // ENJIN 1: SnapSave Public API Parser (Sangat Stabil Untuk Facebook Reels & Shorts)
+    // Cubaan 1: SnapSave API
     try {
       const params = new URLSearchParams();
       params.append('url', targetUrl);
@@ -44,8 +68,6 @@ app.post('/api/download', async (req, res) => {
 
       if (snapRes.ok) {
         const htmlText = await snapRes.text();
-        
-        // Ekstrak URL video daripada respon SnapSave
         const urlMatches = htmlText.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i) || 
                            htmlText.match(/https:\/\/video[^\s"']+/i);
                            
@@ -54,36 +76,27 @@ app.post('/api/download', async (req, res) => {
         }
       }
     } catch (e) {
-      console.warn("Enjin SnapSave gagal:", e.message);
+      console.warn("SnapSave gagal:", e.message);
     }
 
-    // ENJIN 2: TiklyDown Fallback (Instagram & Facebook)
+    // Cubaan 2: Cobalt API Fallback
     if (!downloadLink) {
       try {
-        const altRes = await fetch(`https://api.tiklydown.eu.org/api/download?url=${encodeURIComponent(targetUrl)}`);
-        if (altRes.ok) {
-          const altData = await altRes.json();
-          if (altData?.video?.noWatermark || altData?.url) {
-            downloadLink = altData.video?.noWatermark || altData.url;
-          }
-        }
-      } catch (e) {
-        console.warn("Enjin Fallback gagal:", e.message);
-      }
-    }
+        const cobaltRes = await fetch('https://api.cobalt.tools/api/json', {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ url: targetUrl, vQuality: 'max' })
+        });
 
-    // ENJIN 3: Direct Rapid Extractor
-    if (!downloadLink) {
-      try {
-        const vkrRes = await fetch(`https://api.vkrdown.com/api/item?url=${encodeURIComponent(targetUrl)}`);
-        if (vkrRes.ok) {
-          const vkrData = await vkrRes.json();
-          if (vkrData?.data?.downloads?.[0]?.url) {
-            downloadLink = vkrData.data.downloads[0].url;
-          }
+        if (cobaltRes.ok) {
+          const cobaltData = await cobaltRes.json();
+          downloadLink = cobaltData.url || (cobaltData.picker && cobaltData.picker[0]?.url);
         }
       } catch (e) {
-        console.warn("Enjin VKR gagal:", e.message);
+        console.warn("Cobalt gagal:", e.message);
       }
     }
 
@@ -102,7 +115,7 @@ app.post('/api/download', async (req, res) => {
     }
 
   } catch (err) {
-    console.error("Ralat Pelayan Internal:", err);
+    console.error("Ralat Pelayan:", err);
     return res.status(500).json({ 
       success: false, 
       message: "Ralat dalaman pelayan semasa memproses pautan." 
