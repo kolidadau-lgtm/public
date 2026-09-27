@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# exit on error
+# Henti jika ada ralat
 set -o errexit
 
 npm install
 
-# Muat turun executable yt-dlp secara automatik di pelayan Render
+# Muat turun binari yt-dlp secara automatik ke pelayan Render
 mkdir -p bin
 curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o bin/yt-dlp
 chmod a+rx bin/yt-dlp
