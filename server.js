@@ -19,7 +19,7 @@ app.post('/api/download', (req, res) => {
     return res.status(400).json({ error: 'Sila masukkan pautan video!' });
   }
 
-  // Arahan yt-dlp untuk mendapatkan URL terus dalam format JSON
+  // Menggunakan yt-dlp dengan sokongan pautan redirect / share
   const command = `./yt-dlp -j --no-playlist "${targetUrl}"`;
 
   exec(command, (error, stdout, stderr) => {
@@ -32,8 +32,7 @@ app.post('/api/download', (req, res) => {
 
     try {
       const info = JSON.parse(stdout);
-      // Cari pautan muat turun berkualiti terbaik
-      const downloadUrl = info.url || (info.formats && info.formats.pop().url);
+      const downloadUrl = info.url || (info.formats && info.formats[info.formats.length - 1].url);
 
       if (downloadUrl) {
         return res.json({
@@ -41,10 +40,10 @@ app.post('/api/download', (req, res) => {
           downloadUrl: downloadUrl
         });
       } else {
-        throw new Error('Pautan tidak dijumpai dalam output JSON');
+        throw new Error('Pautan tidak dijumpai');
       }
     } catch (parseError) {
-      console.error('Ralat Parsing JSON:', parseError);
+      console.error('Ralat Parsing:', parseError);
       return res.status(400).json({
         error: 'Gagal mengekstrak video. Sila pastikan pautan adalah daripada video/Reels awam (Public).'
       });
