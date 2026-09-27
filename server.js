@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const { exec } = require('child_process');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -8,54 +9,49 @@ app.use(cors());
 app.use(express.json());
 
 app.get('/', (req, res) => {
-  res.status(200).send('Backend Downloader Aktif!');
+  res.send('Server Downloader Aktif!');
 });
 
-app.post('/api/download', async (req, res) => {
-  try {
-    let { url } = req.body;
+app.post('/api/download', (req, res) => {
+  const targetUrl = req.body.url || req.body.videoUrl;
 
-    if (!url) {
-      return res.status(400).json({ error: "Sila masukkan URL video yang sah!" });
-    }
-
-    // Gunakan Enjin Awam Cobalt API
-    const response = await fetch("https://api.cobalt.tools/api/json", {
-      method: "POST",
-      headers: {
-        "Accept": "application/json",
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        url: url,
-        videoQuality: "max"
-      })
-    });
-
-    const data = await response.json();
-
-    if (data && (data.url || data.picker)) {
-      const downloadLink = data.url || (data.picker && data.picker[0] ? data.picker[0].url : null);
-      
-      if (downloadLink) {
-        return res.status(200).json({
-          success: true,
-          downloadUrl: downloadLink,
-          message: "Video berjaya diproses!"
-        });
-      }
-    }
-
-    return res.status(400).json({
-      error: "Gagal mengekstrak video. Pastikan pautan adalah daripada video/Reels awam (Public)."
-    });
-
-  } catch (err) {
-    console.error("Ralat Pelayan:", err);
-    return res.status(500).json({ error: "Ralat dalaman pelayan semasa memproses pautan." });
+  if (!targetUrl) {
+    return res.status(400).json({ error: 'Sila masukkan pautan video!' });
   }
+
+  // Arahan yt-dlp untuk mendapatkan URL terus dalam format JSON
+  const command = `./yt-dlp -j --no-playlist "${targetUrl}"`;
+
+  exec(command, (error, stdout, stderr) => {
+    if (error) {
+      console.error('Ralat yt-dlp:', stderr || error.message);
+      return res.status(400).json({
+        error: 'Gagal mengekstrak video. Sila pastikan pautan adalah daripada video/Reels awam (Public).'
+      });
+    }
+
+    try {
+      const info = JSON.parse(stdout);
+      // Cari pautan muat turun berkualiti terbaik
+      const downloadUrl = info.url || (info.formats && info.formats.pop().url);
+
+      if (downloadUrl) {
+        return res.json({
+          success: true,
+          downloadUrl: downloadUrl
+        });
+      } else {
+        throw new Error('Pautan tidak dijumpai dalam output JSON');
+      }
+    } catch (parseError) {
+      console.error('Ralat Parsing JSON:', parseError);
+      return res.status(400).json({
+        error: 'Gagal mengekstrak video. Sila pastikan pautan adalah daripada video/Reels awam (Public).'
+      });
+    }
+  });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server aktif pada port ${PORT}`);
+  console.log(`Server beroperasi di port ${PORT}`);
 });
